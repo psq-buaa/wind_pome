@@ -1,4 +1,4 @@
-import type { PoemEntry, HalfLine, FullPoem, AnalysisResult } from './types';
+import type { PoemEntry, HalfLine, FullPoem, AnalysisResult, ResearchReport } from './types';
 import { loadPersistedAnalysis } from './store';
 
 interface AnalysisInfo {
@@ -91,4 +91,33 @@ export async function loadBuiltinPoemData(existingPoems: PoemEntry[]): Promise<P
   });
 
   return entries;
+}
+
+/** 加载内置关键词列表（合并 JSON 文件 + localStorage） */
+export async function loadBuiltinKeywords(existingKeywords: string[]): Promise<string[]> {
+  const keywordsSet = new Set(existingKeywords);
+  try {
+    const res = await fetch('/data/non_nature_keywords.json');
+    if (res.ok) {
+      const data: string[] = await res.json();
+      data.forEach(k => keywordsSet.add(k));
+    }
+  } catch { /* ignore */ }
+  return Array.from(keywordsSet);
+}
+
+/** 加载内置研究报告（合并 JSON 文件 + localStorage） */
+export async function loadBuiltinReports(existingReports: ResearchReport[]): Promise<ResearchReport[]> {
+  const existingIds = new Set(existingReports.map(r => r.id));
+  const merged = [...existingReports];
+  try {
+    const res = await fetch('/data/research_reports.json');
+    if (res.ok) {
+      const data: ResearchReport[] = await res.json();
+      data.forEach(r => {
+        if (!existingIds.has(r.id)) merged.push(r);
+      });
+    }
+  } catch { /* ignore */ }
+  return merged;
 }

@@ -1,6 +1,5 @@
 import type { ApiProvider, AnalysisResult } from './types';
 
-// 构建风意象分类 prompt
 function buildClassifyPrompt(halfLine: string, fullContent: string): string {
   return `你是一位精通古典诗词的学者。请分析以下唐诗中"风"字的含义。
 
@@ -13,7 +12,7 @@ function buildClassifyPrompt(halfLine: string, fullContent: string): string {
 {
   "windType": "nature" 或 "non-nature",
   "windTypeReason": "判断理由，简洁说明",
-  "nonNatureCategory": "如果是非自然意象，说明属于什么类别，如风俗、风流、风雅、风骨等",
+  "nonNatureCategory": "如果是非自然意象，说明属于什么类别",
   "windSubtype": "如果是自然意象，子分类：春风/秋风/北风/南风/东风/西风/朔风/清风/寒风/暖风/微风/狂风/晓风/晚风/松风/熏风/金风/其他",
   "sentiment": "情感类别：悲伤/欢乐/豪迈/凄凉/清新/思乡/孤寂/壮美/柔美/萧瑟/激昂/宁静/哀怨/其他",
   "sentimentIntensity": 1到5的数字表示情感强度,
@@ -23,10 +22,8 @@ function buildClassifyPrompt(halfLine: string, fullContent: string): string {
 }`;
 }
 
-// 调用 AI API (兼容 OpenAI 格式)
 export async function callAI(provider: ApiProvider, prompt: string): Promise<string> {
   const url = `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`;
-
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -36,37 +33,26 @@ export async function callAI(provider: ApiProvider, prompt: string): Promise<str
     body: JSON.stringify({
       model: provider.model,
       messages: [
-        {
-          role: 'system',
-          content: '你是一位精通中国古典诗词的学者，擅长分析诗词中的自然意象和情感。请严格按要求的JSON格式回复。'
-        },
+        { role: 'system', content: '你是一位精通中国古典诗词的学者，擅长分析诗词中的自然意象和情感。请严格按要求的JSON格式回复。' },
         { role: 'user', content: prompt }
       ],
       temperature: 0.3,
       max_tokens: 800,
     }),
   });
-
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`API 请求失败 (${response.status}): ${errText}`);
   }
-
   const data = await response.json();
   return data.choices?.[0]?.message?.content || '';
 }
 
-// 解析 AI 返回的 JSON
 function parseAIResponse(text: string): AnalysisResult {
-  // 尝试提取 JSON
   let jsonStr = text;
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    jsonStr = jsonMatch[0];
-  }
-
+  if (jsonMatch) jsonStr = jsonMatch[0];
   const parsed = JSON.parse(jsonStr);
-
   return {
     windType: parsed.windType === 'nature' ? 'nature' : 'non-nature',
     windTypeReason: parsed.windTypeReason || '',
@@ -80,36 +66,63 @@ function parseAIResponse(text: string): AnalysisResult {
   };
 }
 
-// 分析单条诗歌
 export async function analyzeSinglePoem(
-  provider: ApiProvider,
-  halfLine: string,
-  fullContent: string,
+  provider: ApiProvider, halfLine: string, fullContent: string,
 ): Promise<AnalysisResult> {
   const prompt = buildClassifyPrompt(halfLine, fullContent);
   const response = await callAI(provider, prompt);
   return parseAIResponse(response);
 }
 
-// 批量情感深度分析 prompt
-export function buildDeepAnalysisPrompt(poems: { halfLine: string; content: string; author: string; title: string }[]): string {
-  const poemList = poems.map((p, i) =>
-    `${i + 1}. 《${p.title}》${p.author} - 半联："${p.halfLine}"`
+export const RESEARCH_TOPICS = [
+  { id: 'overview', name: '风意象总览', desc: '全唐诗中"风"意象的整体特征、分布和规律' },
+  { id: 'history', name: '历史变迁', desc: '风意象在唐代不同时期的演变脉络' },
+  { id: 'emotion', name: '情感分析', desc: '风意象承载的情感特征与情感分布' },
+  { id: 'subtype', name: '风类型对比', desc: '春风、秋风、北风等不同类型的特征对比' },
+  { id: 'poet', name: '诗人脉络', desc: '不同诗人对风意象的运用特点与传承' },
+  { id: 'nature_vs_non', name: '自然与非自然', desc: '风的自然意象与非自然意义的分布与关联' },
+  { id: 'custom', name: '自定义主题', desc: '输入自定义研究主题' },
+] as const;
+
+export async function generateResearchReport(
+  provider: ApiProvider,
+  topicId: string,
+  customTopic: string,
+  stats: { total: number; analyzed: number; nature: number; nonNature: number; sentimentDist: Record<string, number>; subtypeDist: Record<string, number>; topAuthors: { name: string; count: number }[] },
+  samplePoems: { title: string; author: string; halfLine: string; sentiment?: string; windSubtype?: string }[],
+): Promise<string> {
+  const topic = RESEARCH_TOPICS.find(t => t.id === topicId);
+  const topicName = topicId === 'custom' ? customTopic : topic?.name || topicId;
+  const topicDesc = topicId === 'custom' ? customTopic : topic?.desc || '';
+
+  const dataSummary = `数据概况：
+- 总诗句数: ${stats.total}，已分析: ${stats.analyzed}
+- 自然意象: ${stats.nature}，非自然意象: ${stats.nonNature}
+- 情感分布: ${Object.entries(stats.sentimentDist).map(([k, v]) => `${k}(${v})`).join('、')}
+- 风类型: ${Object.entries(stats.subtypeDist).map(([k, v]) => `${k}(${v})`).join('、')}
+- 高频诗人: ${stats.topAuthors.map(a => `${a.name}(${a.count}首)`).join('、')}`;
+
+  const sampleText = samplePoems.slice(0, 30).map((p, i) =>
+    `${i + 1}. 《${p.title}》${p.author} - "${p.halfLine}" [${p.windSubtype || ''}/${p.sentiment || ''}]`
   ).join('\n');
 
-  return `请对以下${poems.length}首唐诗中"风"的自然意象进行情感脉络分析：
+  const prompt = `你是一位专业的古典文学研究者，正在协助撰写关于全唐诗中"风"意象的学术论文。
 
-${poemList}
+研究主题：${topicName}
+主题说明：${topicDesc}
 
-请以JSON格式回复，不要包含markdown代码块标记：
-{
-  "overallTheme": "整体情感主题概述",
-  "emotionalProgression": "情感变化脉络描述",
-  "connections": [
-    {"from": 1, "to": 3, "relation": "情感联系描述"}
-  ],
-  "clusters": [
-    {"name": "簇名", "poemIndices": [1,2], "description": "描述"}
-  ]
-}`;
+${dataSummary}
+
+代表性诗句样本：
+${sampleText}
+
+请基于以上数据撰写详细的研究分析报告：
+1. 学术论文风格，条理清晰
+2. 包含数据分析、诗句引用、深入阐释
+3. 提出有学术价值的观点和结论
+4. Markdown 格式，1500-3000 字
+
+请直接输出报告内容：`;
+
+  return callAI(provider, prompt);
 }

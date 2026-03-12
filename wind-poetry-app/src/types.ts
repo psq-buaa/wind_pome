@@ -104,3 +104,44 @@ export interface ExportConfig {
   scope: 'all' | 'nature' | 'non-nature' | 'reviewed';
   includeAnalysis: boolean;
 }
+
+// 研究报告
+export interface ResearchReport {
+  id: string;
+  topic: string;
+  content: string;        // AI 生成的报告内容（Markdown）
+  generatedAt: string;    // ISO 时间戳
+  dataSnapshot: {
+    totalPoems: number;
+    analyzedCount: number;
+    natureCount: number;
+    nonNatureCount: number;
+  };
+}
+
+// 分类来源标识
+export type ClassificationSource = 'human' | 'ai' | 'keyword' | 'none';
+
+// 获取诗歌的有效风类型（优先级：人工 > AI > 关键词 > 待定）
+export function getEffectiveWindType(
+  poem: PoemEntry,
+  keywords: string[],
+): { type: WindType | 'pending'; source: ClassificationSource } {
+  if (poem.humanOverride?.windType) {
+    return { type: poem.humanOverride.windType, source: 'human' };
+  }
+  if (poem.analysis?.windType) {
+    return { type: poem.analysis.windType, source: 'ai' };
+  }
+  const text = poem.halfLine || poem.content;
+  if (text && keywords.some(kw => text.includes(kw))) {
+    return { type: 'non-nature', source: 'keyword' };
+  }
+  return { type: 'pending', source: 'none' };
+}
+
+// 检查诗歌是否匹配指定关键词
+export function poemMatchesKeyword(poem: PoemEntry, keyword: string): boolean {
+  const text = poem.halfLine || poem.content;
+  return !!text && text.includes(keyword);
+}

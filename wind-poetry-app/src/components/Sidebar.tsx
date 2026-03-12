@@ -1,15 +1,17 @@
 import { useStore } from '../store';
 import {
   LayoutDashboard, Database, Filter, BarChart3,
-  TrendingUp, Settings, Wind,
+  TrendingUp, Settings, Wind, Tag, BookOpen,
 } from 'lucide-react';
 
 const navItems = [
   { id: 'dashboard', label: '总览', icon: LayoutDashboard },
   { id: 'data', label: '数据管理', icon: Database },
+  { id: 'keywords', label: '关键词过滤', icon: Tag },
   { id: 'classifier', label: '风意象分类', icon: Filter },
   { id: 'sentiment', label: '情感分析', icon: TrendingUp },
   { id: 'visualization', label: '可视化', icon: BarChart3 },
+  { id: 'research', label: '研究助手', icon: BookOpen },
   { id: 'settings', label: '设置', icon: Settings },
 ];
 

@@ -1,7 +1,9 @@
 import { create } from 'zustand';
-import type { PoemEntry, ApiProvider, BatchProgress, AnalysisResult } from './types';
+import type { PoemEntry, ApiProvider, BatchProgress, AnalysisResult, ResearchReport } from './types';
 
 const ANALYSIS_KEY = 'wind_poetry_analysis';
+const KEYWORDS_KEY = 'wind_poetry_keywords';
+const REPORTS_KEY = 'wind_poetry_reports';
 
 // 分析结果缓存条目
 interface AnalysisCacheEntry {
@@ -42,7 +44,37 @@ function persistAnalysis(poems: PoemEntry[]) {
   } catch { /* quota exceeded etc. */ }
 }
 
-// 清理旧版全量持久化数据（曾超出 localStorage 限额导致丢失）
+// 关键词持久化
+function loadPersistedKeywords(): string[] {
+  try {
+    const raw = localStorage.getItem(KEYWORDS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return [];
+}
+
+function persistKeywords(keywords: string[]) {
+  try {
+    localStorage.setItem(KEYWORDS_KEY, JSON.stringify(keywords));
+  } catch { /* ignore */ }
+}
+
+// 研究报告持久化
+function loadPersistedReports(): ResearchReport[] {
+  try {
+    const raw = localStorage.getItem(REPORTS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return [];
+}
+
+function persistReports(reports: ResearchReport[]) {
+  try {
+    localStorage.setItem(REPORTS_KEY, JSON.stringify(reports));
+  } catch { /* ignore */ }
+}
+
+// 清理旧版全量持久化数据
 try { localStorage.removeItem('wind_poetry_poems'); } catch { /* ignore */ }
 
 interface AppStore {
@@ -51,6 +83,23 @@ interface AppStore {
   setPoems: (poems: PoemEntry[]) => void;
   addPoems: (poems: PoemEntry[]) => void;
   updatePoem: (id: string, halfLine: string | undefined, updates: Partial<PoemEntry>) => void;
+
+  // 非自然意象关键词
+  nonNatureKeywords: string[];
+  setNonNatureKeywords: (keywords: string[]) => void;
+  addKeyword: (keyword: string) => void;
+  removeKeyword: (keyword: string) => void;
+
+  // 多选
+  selectedPoemKeys: string[];
+  togglePoemSelection: (key: string) => void;
+  setSelectedPoemKeys: (keys: string[]) => void;
+
+  // 研究报告
+  researchReports: ResearchReport[];
+  addResearchReport: (report: ResearchReport) => void;
+  deleteResearchReport: (id: string) => void;
+  setResearchReports: (reports: ResearchReport[]) => void;
 
   // API 配置（仅内存，不持久化）
   apiProvider: ApiProvider | null;
@@ -68,7 +117,7 @@ interface AppStore {
   currentPage: string;
   setCurrentPage: (page: string) => void;
 
-  // 选中诗歌
+  // 选中诗歌（详情查看）
   selectedPoemKey: string | null;
   setSelectedPoemKey: (key: string | null) => void;
 }
@@ -95,6 +144,52 @@ export const useStore = create<AppStore>((set) => ({
     persistAnalysis(updated);
     return { poems: updated };
   }),
+
+  // 非自然意象关键词
+  nonNatureKeywords: loadPersistedKeywords(),
+  setNonNatureKeywords: (keywords) => {
+    persistKeywords(keywords);
+    set({ nonNatureKeywords: keywords });
+  },
+  addKeyword: (keyword) => set((s) => {
+    if (s.nonNatureKeywords.includes(keyword)) return s;
+    const updated = [...s.nonNatureKeywords, keyword];
+    persistKeywords(updated);
+    return { nonNatureKeywords: updated };
+  }),
+  removeKeyword: (keyword) => set((s) => {
+    const updated = s.nonNatureKeywords.filter(k => k !== keyword);
+    persistKeywords(updated);
+    return { nonNatureKeywords: updated };
+  }),
+
+  // 多选
+  selectedPoemKeys: [],
+  togglePoemSelection: (key) => set((s) => {
+    const idx = s.selectedPoemKeys.indexOf(key);
+    if (idx >= 0) {
+      return { selectedPoemKeys: s.selectedPoemKeys.filter((_, i) => i !== idx) };
+    }
+    return { selectedPoemKeys: [...s.selectedPoemKeys, key] };
+  }),
+  setSelectedPoemKeys: (keys) => set({ selectedPoemKeys: keys }),
+
+  // 研究报告
+  researchReports: loadPersistedReports(),
+  addResearchReport: (report) => set((s) => {
+    const updated = [report, ...s.researchReports];
+    persistReports(updated);
+    return { researchReports: updated };
+  }),
+  deleteResearchReport: (id) => set((s) => {
+    const updated = s.researchReports.filter(r => r.id !== id);
+    persistReports(updated);
+    return { researchReports: updated };
+  }),
+  setResearchReports: (reports) => {
+    persistReports(reports);
+    set({ researchReports: reports });
+  },
 
   apiProvider: null,
   setApiProvider: (provider) => set({ apiProvider: provider }),

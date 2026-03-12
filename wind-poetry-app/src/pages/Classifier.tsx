@@ -1,77 +1,81 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import { useStore } from '../store';
 import { analyzeSinglePoem } from '../ai';
-import type { PoemEntry, WindType, AnalysisResult } from '../types';
-import { Play, Pause, CheckCircle, XCircle, Eye, Zap, Filter } from 'lucide-react';
+import { getEffectiveWindType } from '../types';
+import type { PoemEntry, WindType } from '../types';
+import { Pause, CheckCircle, XCircle, Eye, Zap, Square, CheckSquare, Download } from 'lucide-react';
+
+const poemKey = (p: PoemEntry) => `${p.id}__${p.halfLine || ''}`;
 
 export default function Classifier() {
-  const poems = useStore((s) => s.poems);
-  const updatePoem = useStore((s) => s.updatePoem);
-  const apiProvider = useStore((s) => s.apiProvider);
-  const batchProgress = useStore((s) => s.batchProgress);
-  const setBatchProgress = useStore((s) => s.setBatchProgress);
-  const setCurrentPage = useStore((s) => s.setCurrentPage);
+  const poems = useStore(s => s.poems);
+  const updatePoem = useStore(s => s.updatePoem);
+  const apiProvider = useStore(s => s.apiProvider);
+  const batchProgress = useStore(s => s.batchProgress);
+  const setBatchProgress = useStore(s => s.setBatchProgress);
+  const setCurrentPage = useStore(s => s.setCurrentPage);
+  const keywords = useStore(s => s.nonNatureKeywords);
+  const selectedKeys = useStore(s => s.selectedPoemKeys);
+  const toggleSelection = useStore(s => s.togglePoemSelection);
+  const setSelectedKeys = useStore(s => s.setSelectedPoemKeys);
 
-  const [viewFilter, setViewFilter] = useState<'all' | 'pending' | 'nature' | 'non-nature' | 'reviewed'>('all');
+  const [viewFilter, setViewFilter] = useState<'all' | 'pending' | 'nature' | 'non-nature' | 'reviewed' | 'keyword'>('all');
   const [detailPoem, setDetailPoem] = useState<PoemEntry | null>(null);
+  const [batchSize, setBatchSize] = useState(20);
   const pauseRef = useRef(false);
 
-  const getWindType = (p: PoemEntry): WindType | 'pending' =>
-    p.humanOverride?.windType || p.analysis?.windType || 'pending';
+  const getWT = (p: PoemEntry) => getEffectiveWindType(p, keywords);
 
-  const filtered = poems.filter(p => {
+  const filtered = useMemo(() => poems.filter(p => {
+    const { type, source } = getWT(p);
     if (viewFilter === 'all') return true;
     if (viewFilter === 'reviewed') return p.humanReviewed;
-    return getWindType(p) === viewFilter;
-  });
+    if (viewFilter === 'keyword') return source === 'keyword';
+    return type === viewFilter;
+  }), [poems, viewFilter, keywords]);
 
-  // 批量 AI 分类
-  const runBatchClassify = useCallback(async () => {
+  // 批量 AI 分类（支持选中条目或待分析条目）
+  const runBatchClassify = useCallback(async (targets?: PoemEntry[]) => {
     if (!apiProvider) {
       alert('请先在"设置"中配置 API 密钥');
       setCurrentPage('settings');
       return;
     }
-    const pending = poems.filter(p => !p.analysis);
-    if (pending.length === 0) {
-      alert('所有诗句已分析完成');
+    const pending = targets || poems.filter(p => !p.analysis && !p.humanReviewed);
+    const batch = pending.slice(0, batchSize);
+    if (batch.length === 0) {
+      alert(targets ? '所选条目均已分析' : '无待分析条目');
       return;
     }
 
     pauseRef.current = false;
-    setBatchProgress({ total: pending.length, completed: 0, status: 'running', errors: [] });
+    setBatchProgress({ total: batch.length, completed: 0, status: 'running', errors: [] });
 
-    for (let i = 0; i < pending.length; i++) {
-      if (pauseRef.current) {
-        setBatchProgress({ status: 'paused' });
-        return;
-      }
-
-      const p = pending[i];
+    for (let i = 0; i < batch.length; i++) {
+      if (pauseRef.current) { setBatchProgress({ status: 'paused' }); return; }
+      const p = batch[i];
       setBatchProgress({ current: `${p.title} - ${p.halfLine || ''}`, completed: i });
-
       try {
-        const result = await analyzeSinglePoem(
-          apiProvider,
-          p.halfLine || '',
-          p.content,
-        );
+        const result = await analyzeSinglePoem(apiProvider, p.halfLine || '', p.content);
         updatePoem(p.id, p.halfLine, { analysis: result });
       } catch (err) {
         setBatchProgress({
           errors: [...(batchProgress.errors || []),
             `${p.id}: ${err instanceof Error ? err.message : String(err)}`],
         });
-        // 短暂延迟后继续
         await new Promise(r => setTimeout(r, 1000));
       }
-
-      // 请求间隔
       await new Promise(r => setTimeout(r, 500));
     }
+    setBatchProgress({ completed: batch.length, status: 'done', current: '' });
+    setSelectedKeys([]);
+  }, [apiProvider, poems, batchSize, updatePoem, setBatchProgress, batchProgress.errors, setCurrentPage, setSelectedKeys]);
 
-    setBatchProgress({ completed: pending.length, status: 'done', current: '' });
-  }, [apiProvider, poems, updatePoem, setBatchProgress, batchProgress.errors, setCurrentPage]);
+  // 分析选中的条目
+  const runSelectedClassify = useCallback(() => {
+    const targets = poems.filter(p => selectedKeys.includes(poemKey(p)));
+    runBatchClassify(targets);
+  }, [poems, selectedKeys, runBatchClassify]);
 
   // 人工审核
   function handleHumanReview(poem: PoemEntry, windType: WindType) {
@@ -84,9 +88,35 @@ export default function Classifier() {
     });
   }
 
-  const pendingCount = poems.filter(p => !p.analysis).length;
+  const pendingCount = poems.filter(p => !p.analysis && !p.humanReviewed).length;
   const progressPct = batchProgress.total > 0
     ? Math.round((batchProgress.completed / batchProgress.total) * 100) : 0;
+
+  // 导出分析结果为JSON（共享到 public/data/）
+  function exportAnalysis() {
+    const analyzed = poems.filter(p => p.analysis || p.humanReviewed);
+    if (analyzed.length === 0) { alert('暂无分析结果'); return; }
+    const cache = analyzed.map(p => ({
+      key: poemKey(p), analysis: p.analysis,
+      humanReviewed: p.humanReviewed, humanOverride: p.humanOverride,
+    }));
+    const blob = new Blob([JSON.stringify(cache, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'analysis_cache.json'; a.click();
+    URL.revokeObjectURL(url);
+    alert(`已导出 ${analyzed.length} 条。放入 public/data/ 即团队共享。`);
+  }
+
+  // 全选/取消当前页
+  function toggleSelectAll() {
+    const pageKeys = filtered.slice(0, 200).map(p => poemKey(p));
+    const allSelected = pageKeys.every(k => selectedKeys.includes(k));
+    if (allSelected) {
+      setSelectedKeys(selectedKeys.filter(k => !pageKeys.includes(k)));
+    } else {
+      setSelectedKeys([...new Set([...selectedKeys, ...pageKeys])]);
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -94,21 +124,39 @@ export default function Classifier() {
         <div>
           <h2 className="text-2xl font-bold text-ink-800">风意象分类</h2>
           <p className="text-ink-400 text-sm mt-1">
-            AI 自动判断"风"是否为自然意象，支持人工审核纠正
+            AI 自动判断+人工审核 · 支持多选批量分析
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* 批量大小选择 */}
+          <label className="text-xs text-ink-500">批量数:</label>
+          <select value={batchSize} onChange={e => setBatchSize(Number(e.target.value))}
+            className="px-2 py-1.5 border border-ink-200 rounded-lg text-sm">
+            {[10, 20, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+
           {batchProgress.status === 'running' ? (
             <button onClick={() => { pauseRef.current = true; }} className="btn-secondary flex items-center gap-1.5">
               <Pause className="w-4 h-4" /> 暂停
             </button>
           ) : (
-            <button onClick={runBatchClassify} disabled={pendingCount === 0}
-              className="btn-primary flex items-center gap-1.5">
-              <Zap className="w-4 h-4" />
-              {pendingCount > 0 ? `AI分类 (${pendingCount}条待分析)` : '全部已分析'}
-            </button>
+            <>
+              {selectedKeys.length > 0 && (
+                <button onClick={runSelectedClassify} className="btn-primary flex items-center gap-1.5">
+                  <Zap className="w-4 h-4" />
+                  分析选中 ({selectedKeys.length})
+                </button>
+              )}
+              <button onClick={() => runBatchClassify()} disabled={pendingCount === 0}
+                className="btn-primary flex items-center gap-1.5">
+                <Zap className="w-4 h-4" />
+                批量AI分析 ({Math.min(pendingCount, batchSize)})
+              </button>
+            </>
           )}
+          <button onClick={exportAnalysis} className="btn-secondary flex items-center gap-1.5">
+            <Download className="w-4 h-4" /> 导出
+          </button>
         </div>
       </div>
 
@@ -135,12 +183,18 @@ export default function Classifier() {
       )}
 
       {/* Filter tabs */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center">
+        <button onClick={toggleSelectAll} className="p-1.5 rounded-lg hover:bg-ink-100 text-ink-400" title="全选/取消">
+          {filtered.slice(0, 200).every(p => selectedKeys.includes(poemKey(p)))
+            ? <CheckSquare className="w-4 h-4 text-wind-600" />
+            : <Square className="w-4 h-4" />}
+        </button>
         {[
           { key: 'all', label: '全部' },
           { key: 'pending', label: '待分析' },
           { key: 'nature', label: '自然意象' },
           { key: 'non-nature', label: '非自然' },
+          { key: 'keyword', label: '关键词过滤' },
           { key: 'reviewed', label: '已审核' },
         ].map(tab => (
           <button
@@ -156,7 +210,8 @@ export default function Classifier() {
             <span className="ml-1 opacity-70">
               ({tab.key === 'all' ? poems.length :
                 tab.key === 'reviewed' ? poems.filter(p => p.humanReviewed).length :
-                poems.filter(p => getWindType(p) === tab.key).length})
+                tab.key === 'keyword' ? poems.filter(p => getWT(p).source === 'keyword').length :
+                poems.filter(p => getWT(p).type === tab.key).length})
             </span>
           </button>
         ))}
@@ -164,17 +219,28 @@ export default function Classifier() {
 
       {/* List */}
       <div className="space-y-2">
-        {filtered.slice(0, 100).map((p, i) => {
-          const wt = getWindType(p);
+        {filtered.slice(0, 200).map((p, i) => {
+          const { type: wt, source } = getWT(p);
+          const key = poemKey(p);
+          const selected = selectedKeys.includes(key);
           return (
             <div key={`${p.id}_${p.halfLine}_${i}`}
-              className="card flex items-center gap-4 !py-3">
+              className={`card flex items-center gap-4 !py-3 ${selected ? 'ring-2 ring-wind-400' : ''}`}>
+              {/* 复选框 */}
+              <button onClick={() => toggleSelection(key)} className="shrink-0">
+                {selected
+                  ? <CheckSquare className="w-4 h-4 text-wind-600" />
+                  : <Square className="w-4 h-4 text-ink-300" />}
+              </button>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-ink-700">{p.title}</span>
                   <span className="text-ink-400 text-xs">—— {p.author}</span>
                   {p.humanReviewed && (
                     <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">已审核</span>
+                  )}
+                  {source === 'keyword' && (
+                    <span className="text-[10px] px-1.5 py-0.5 bg-orange-50 text-orange-600 rounded">关键词</span>
                   )}
                 </div>
                 <p className="text-ink-600 text-sm mt-0.5 truncate">
@@ -213,8 +279,8 @@ export default function Classifier() {
             </div>
           );
         })}
-        {filtered.length > 100 && (
-          <p className="text-center text-ink-400 text-xs py-2">显示前 100 条，共 {filtered.length} 条</p>
+        {filtered.length > 200 && (
+          <p className="text-center text-ink-400 text-xs py-2">显示前 200 条，共 {filtered.length} 条</p>
         )}
       </div>
 
