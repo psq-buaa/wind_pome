@@ -1,7 +1,6 @@
 [build]
-  base = "wind-poetry-app"
   command = "npm run build"
-  publish = "wind-poetry-app/dist"
+  publish = "dist"
 
 [[redirects]]
   from = "/*"
