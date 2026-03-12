@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: #faf8f5;
+  --color-text: #2a2622;
+}
+
+body {
+  margin: 0;
+  font-family: 'Noto Serif SC', 'Source Han Serif CN', 'SimSun', serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-ink-100 p-5;
+  }
+  .btn-primary {
+    @apply px-4 py-2 bg-wind-600 text-white rounded-lg hover:bg-wind-700 transition-colors font-medium text-sm;
+  }
+  .btn-secondary {
+    @apply px-4 py-2 bg-ink-100 text-ink-700 rounded-lg hover:bg-ink-200 transition-colors font-medium text-sm;
+  }
+  .btn-danger {
+    @apply px-4 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors font-medium text-sm;
+  }
+  .tag {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .tag-nature {
+    @apply tag bg-wind-100 text-wind-700;
+  }
+  .tag-non-nature {
+    @apply tag bg-amber-100 text-amber-700;
+  }
+  .tag-pending {
+    @apply tag bg-ink-100 text-ink-600;
+  }
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d4cec4; border-radius: 3px; }
