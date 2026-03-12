@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useStore } from '../store';
-import type { PoemEntry, HalfLine, FullPoem } from '../types';
+import { loadBuiltinPoemData } from '../dataLoader';
+import type { PoemEntry } from '../types';
 import { Upload, FileJson, FileText, Trash2, Download, Search, Save } from 'lucide-react';
 
 // 内置数据路径
@@ -21,79 +22,7 @@ export default function DataManager() {
   async function loadBuiltinData() {
     setLoading(true);
     try {
-      // 加载半联
-      const halfRes = await fetch('/data/含风的半联.json');
-      const halfData: HalfLine[] = await halfRes.json();
-
-      // 加载整首诗
-      const fullRes = await fetch('/data/full_poems.json');
-      const fullData: FullPoem[] = await fullRes.json();
-
-      // 尝试加载已保存的分析结果缓存
-      let analysisCache = new Map<string, { analysis?: any; humanReviewed?: boolean; humanOverride?: any }>();
-      try {
-        const cacheRes = await fetch('/data/analysis_cache.json');
-        if (cacheRes.ok) {
-          const cacheData: Array<{ key: string; analysis?: any; humanReviewed?: boolean; humanOverride?: any }> = await cacheRes.json();
-          cacheData.forEach(c => analysisCache.set(c.key, c));
-        }
-      } catch { /* 没有缓存文件，忽略 */ }
-
-      // 内存中已有数据也作为分析来源（优先级高于文件缓存）
-      const existingMap = new Map<string, PoemEntry>();
-      poems.forEach(p => existingMap.set(`${p.id}__${p.halfLine || ''}`, p));
-
-      // 构建整首诗的索引
-      const fullMap = new Map<string, FullPoem>();
-      fullData.forEach(p => fullMap.set(p.id, p));
-
-      // 合并数据：以半联为主，关联整首诗，优先内存分析 > 文件缓存
-      const entries: PoemEntry[] = halfData.map(h => {
-        const full = fullMap.get(h.id);
-        const key = `${h.id}__${h.half_line || ''}`;
-        const existing = existingMap.get(key);
-        const cached = analysisCache.get(key);
-        return {
-          id: h.id,
-          title: h.title,
-          author: h.author,
-          content: full?.content || '',
-          halfLine: h.half_line,
-          source: 'half_line' as const,
-          humanReviewed: existing?.humanReviewed || cached?.humanReviewed || false,
-          analysis: existing?.analysis || cached?.analysis,
-          humanOverride: existing?.humanOverride || cached?.humanOverride,
-        };
-      });
-
-      // 添加没有对应半联的整首诗
-      const halfIds = new Set(halfData.map(h => h.id));
-      fullData.forEach(p => {
-        if (!halfIds.has(p.id)) {
-          const key = `${p.id}__`;
-          const existing = existingMap.get(key);
-          const cached = analysisCache.get(key);
-          entries.push({
-            id: p.id,
-            title: p.title,
-            author: p.author,
-            content: p.content,
-            source: 'full_poem',
-            humanReviewed: existing?.humanReviewed || cached?.humanReviewed || false,
-            analysis: existing?.analysis || cached?.analysis,
-            humanOverride: existing?.humanOverride || cached?.humanOverride,
-          });
-        }
-      });
-
-      // 保留用户上传的数据
-      const builtinKeys = new Set(entries.map(e => `${e.id}__${e.halfLine || ''}`));
-      poems.forEach(p => {
-        if (p.source === 'uploaded' && !builtinKeys.has(`${p.id}__${p.halfLine || ''}`)) {
-          entries.push(p);
-        }
-      });
-
+      const entries = await loadBuiltinPoemData(poems);
       setPoems(entries);
     } catch (e) {
       alert('加载数据失败: ' + (e instanceof Error ? e.message : String(e)));

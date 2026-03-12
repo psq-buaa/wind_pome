@@ -1,23 +1,49 @@
 import { create } from 'zustand';
-import type { PoemEntry, ApiProvider, BatchProgress } from './types';
+import type { PoemEntry, ApiProvider, BatchProgress, AnalysisResult } from './types';
 
-const STORAGE_KEY = 'wind_poetry_poems';
+const ANALYSIS_KEY = 'wind_poetry_analysis';
 
-// 从 localStorage 读取已持久化的诗歌数据（含分析结果）
-function loadPersistedPoems(): PoemEntry[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
-  return [];
+// 分析结果缓存条目
+interface AnalysisCacheEntry {
+  analysis?: AnalysisResult;
+  humanReviewed?: boolean;
+  humanOverride?: Partial<AnalysisResult>;
 }
 
-// 保存诗歌数据到 localStorage
-function persistPoems(poems: PoemEntry[]) {
+// 从 localStorage 读取已持久化的分析结果
+export function loadPersistedAnalysis(): Map<string, AnalysisCacheEntry> {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(poems));
+    const raw = localStorage.getItem(ANALYSIS_KEY);
+    if (raw) {
+      const cache: Array<{ key: string } & AnalysisCacheEntry> = JSON.parse(raw);
+      const map = new Map<string, AnalysisCacheEntry>();
+      cache.forEach(c => map.set(c.key, c));
+      return map;
+    }
+  } catch { /* ignore */ }
+  return new Map();
+}
+
+// 仅保存分析结果到 localStorage（体积小，不会超出5MB限额）
+function persistAnalysis(poems: PoemEntry[]) {
+  try {
+    const analyzed = poems.filter(p => p.analysis || p.humanReviewed);
+    if (analyzed.length === 0) {
+      localStorage.removeItem(ANALYSIS_KEY);
+      return;
+    }
+    const cache = analyzed.map(p => ({
+      key: `${p.id}__${p.halfLine || ''}`,
+      analysis: p.analysis,
+      humanReviewed: p.humanReviewed,
+      humanOverride: p.humanOverride,
+    }));
+    localStorage.setItem(ANALYSIS_KEY, JSON.stringify(cache));
   } catch { /* quota exceeded etc. */ }
 }
+
+// 清理旧版全量持久化数据（曾超出 localStorage 限额导致丢失）
+try { localStorage.removeItem('wind_poetry_poems'); } catch { /* ignore */ }
 
 interface AppStore {
   // 数据
@@ -50,23 +76,23 @@ interface AppStore {
 const poemKey = (p: { id: string; halfLine?: string }) => `${p.id}__${p.halfLine || ''}`;
 
 export const useStore = create<AppStore>((set) => ({
-  poems: loadPersistedPoems(),
+  poems: [],
   setPoems: (poems) => {
-    persistPoems(poems);
+    persistAnalysis(poems);
     set({ poems });
   },
   addPoems: (newPoems) => set((s) => {
     const existingKeys = new Set(s.poems.map(p => poemKey(p)));
     const unique = newPoems.filter(p => !existingKeys.has(poemKey(p)));
     const merged = [...s.poems, ...unique];
-    persistPoems(merged);
+    persistAnalysis(merged);
     return { poems: merged };
   }),
   updatePoem: (id, halfLine, updates) => set((s) => {
     const updated = s.poems.map(p =>
       p.id === id && p.halfLine === halfLine ? { ...p, ...updates } : p
     );
-    persistPoems(updated);
+    persistAnalysis(updated);
     return { poems: updated };
   }),
 
